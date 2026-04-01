@@ -1,55 +1,15 @@
 package store
-
-import (
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
-
-	_ "modernc.org/sqlite"
-)
-
-type DB struct {
-	*sql.DB
-}
-
-func Open(dataDir string) (*DB, error) {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir: %w", err)
-	}
-	dsn := filepath.Join(dataDir, "gazette.db") + "?_journal_mode=WAL&_busy_timeout=5000"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := migrate(db); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	return &DB{db}, nil
-}
-
-func migrate(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS posts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        slug TEXT NOT NULL UNIQUE,
-        content TEXT NOT NULL DEFAULT '',
-        excerpt TEXT,
-        status TEXT DEFAULT 'draft',
-        published_at DATETIME,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-     );
-     CREATE TABLE IF NOT EXISTS tags (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        slug TEXT NOT NULL UNIQUE
-     );
-     CREATE TABLE IF NOT EXISTS post_tags (
-        post_id INTEGER NOT NULL,
-        tag_id INTEGER NOT NULL,
-        PRIMARY KEY (post_id, tag_id)
-     );`)
-	return err
-}
+import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{*sql.DB}
+type Post struct{ID int64 `json:"id"`;Title string `json:"title"`;Slug string `json:"slug"`;Body string `json:"body"`;Excerpt string `json:"excerpt"`;Tags string `json:"tags"`;Status string `json:"status"`;Views int `json:"views"`;PublishedAt *time.Time `json:"published_at"`;CreatedAt time.Time `json:"created_at"`}
+func Open(dataDir string)(*DB,error){if err:=os.MkdirAll(dataDir,0755);err!=nil{return nil,fmt.Errorf("mkdir: %w",err)};dsn:=filepath.Join(dataDir,"gazette.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);if err:=migrate(db);err!=nil{return nil,fmt.Errorf("migrate: %w",err)};return &DB{db},nil}
+func migrate(db *sql.DB)error{_,err:=db.Exec(`CREATE TABLE IF NOT EXISTS posts(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,slug TEXT NOT NULL UNIQUE,body TEXT DEFAULT '',excerpt TEXT DEFAULT '',tags TEXT DEFAULT '',status TEXT DEFAULT 'draft',views INTEGER DEFAULT 0,published_at DATETIME,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(title,body,content='posts',content_rowid='id');`);return err}
+func slugify(s string)string{out:=make([]byte,0,len(s));space:=false;for i:=0;i<len(s);i++{c:=s[i];if(c>='a'&&c<='z')||(c>='0'&&c<='9'){out=append(out,c);space=false}else if c>='A'&&c<='Z'{out=append(out,c+32);space=false}else if!space{out=append(out,'-');space=true}};if len(out)>0&&out[len(out)-1]=='-'{out=out[:len(out)-1]};return string(out)}
+func(db *DB)ListPosts(status string)([]Post,error){var rows *sql.Rows;var err error;if status!=""{rows,err=db.Query(`SELECT id,title,slug,body,excerpt,tags,status,views,published_at,created_at FROM posts WHERE status=? ORDER BY created_at DESC`,status)}else{rows,err=db.Query(`SELECT id,title,slug,body,excerpt,tags,status,views,published_at,created_at FROM posts ORDER BY created_at DESC`)};if err!=nil{return nil,err};defer rows.Close();var out[]Post;for rows.Next(){var p Post;rows.Scan(&p.ID,&p.Title,&p.Slug,&p.Body,&p.Excerpt,&p.Tags,&p.Status,&p.Views,&p.PublishedAt,&p.CreatedAt);out=append(out,p)};return out,nil}
+func(db *DB)GetPost(slug string)(*Post,error){p:=&Post{};err:=db.QueryRow(`SELECT id,title,slug,body,excerpt,tags,status,views,published_at,created_at FROM posts WHERE slug=?`,slug).Scan(&p.ID,&p.Title,&p.Slug,&p.Body,&p.Excerpt,&p.Tags,&p.Status,&p.Views,&p.PublishedAt,&p.CreatedAt);if err!=nil{return nil,err};db.Exec(`UPDATE posts SET views=views+1 WHERE id=?`,p.ID);return p,nil}
+func(db *DB)CreatePost(p *Post)error{if p.Slug==""{p.Slug=slugify(p.Title)};if p.Status==""{p.Status="draft"};var pub interface{};if p.Status=="published"{now:=time.Now();pub=now};res,err:=db.Exec(`INSERT INTO posts(title,slug,body,excerpt,tags,status,published_at)VALUES(?,?,?,?,?,?,?)`,p.Title,p.Slug,p.Body,p.Excerpt,p.Tags,p.Status,pub);if err!=nil{return err};p.ID,_=res.LastInsertId();db.Exec(`INSERT INTO posts_fts(rowid,title,body)VALUES(?,?,?)`,p.ID,p.Title,p.Body);return nil}
+func(db *DB)UpdatePost(p *Post)error{var pub interface{};if p.Status=="published"{now:=time.Now();pub=now};_,err:=db.Exec(`UPDATE posts SET title=?,body=?,excerpt=?,tags=?,status=?,published_at=COALESCE(published_at,?) WHERE id=?`,p.Title,p.Body,p.Excerpt,p.Tags,p.Status,pub,p.ID);db.Exec(`INSERT INTO posts_fts(posts_fts,rowid,title,body)VALUES('delete',?,?,?)`,p.ID,p.Title,p.Body);db.Exec(`INSERT INTO posts_fts(rowid,title,body)VALUES(?,?,?)`,p.ID,p.Title,p.Body);return err}
+func(db *DB)DeletePost(id int64)error{db.Exec(`INSERT INTO posts_fts(posts_fts,rowid,title,body)SELECT 'delete',id,title,body FROM posts WHERE id=?`,id);_,err:=db.Exec(`DELETE FROM posts WHERE id=?`,id);return err}
+func(db *DB)SearchPosts(q string)([]Post,error){rows,err:=db.Query(`SELECT p.id,p.title,p.slug,p.body,p.excerpt,p.tags,p.status,p.views,p.published_at,p.created_at FROM posts p JOIN posts_fts f ON p.id=f.rowid WHERE posts_fts MATCH ? ORDER BY rank LIMIT 20`,q);if err!=nil{return nil,err};defer rows.Close();var out[]Post;for rows.Next(){var p Post;rows.Scan(&p.ID,&p.Title,&p.Slug,&p.Body,&p.Excerpt,&p.Tags,&p.Status,&p.Views,&p.PublishedAt,&p.CreatedAt);out=append(out,p)};return out,nil}
+func(db *DB)CountPosts()(int,error){var n int;db.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&n);return n,nil}
+func(db *DB)TotalViews()(int,error){var n int;db.QueryRow(`SELECT COALESCE(SUM(views),0) FROM posts`).Scan(&n);return n,nil}
