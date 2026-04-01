@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  gazette:
+    build: .
+    ports:
+      - "9250:9250"
+    environment:
+      - PORT=9250
+      - DATA_DIR=/data
+      - GAZETTE_LICENSE_KEY=
+    volumes:
+      - gazette_data:/data
+    restart: unless-stopped
+volumes:
+  gazette_data:
