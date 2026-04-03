@@ -36,4 +36,5 @@ function resetEditor(){editId=null;document.getElementById('editor-title').textC
 function savePost(){var d={title:document.getElementById('f-title').value.trim(),status:document.getElementById('f-status').value,tags:document.getElementById('f-tags').value.trim(),excerpt:document.getElementById('f-excerpt').value.trim(),body:document.getElementById('f-body').value.trim()};if(!d.title)return;var url=editId?'/api/posts/'+editId:'/api/posts';var method=editId?'PUT':'POST';fetch(url,{method:method,headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(r){return r.json()}).then(function(p){if(!editId)editId=p.id;loadPosts();load()})}
 function publishPost(){document.getElementById('f-status').value='published';savePost();document.getElementById('pub-btn').style.display='none'}
 load();loadPosts();
+fetch('/api/tier').then(r=>r.json()).then(j=>{if(j.tier==='free'){var b=document.getElementById('upgrade-banner');if(b)b.style.display='block'}}).catch(()=>{var b=document.getElementById('upgrade-banner');if(b)b.style.display='block'});
 </script></body></html>`)
